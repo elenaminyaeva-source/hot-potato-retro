@@ -36,97 +36,568 @@
 <div id="joinApp" class="app join-view hidden">
   <div class="panel"><div class="panel-inner stack"><div><div class="eyebrow">Player</div><h1 style="margin:.9rem 0 0;font-family:var(--font-display);font-size:var(--text-2xl);line-height:1">Join and pass the potato</h1><p class="muted">The player board now follows the exact host order. You can throw only when your name matches the current potato holder.</p></div><div class="inline-fields"><div class="field"><label for="joinName">Your name</label><input id="joinName" type="text" placeholder="Your name"></div><div class="field"><label for="joinRoom">Room code</label><input id="joinRoom" type="text" readonly></div></div><div class="controls"><button class="btn btn-primary" id="joinBtn">Join game</button><button class="btn btn-ghost" id="watchOnlyBtn">Watch only</button></div><div class="status-card"><span>Connection</span><strong id="joinStatus">Not connected</strong><span id="joinStatusText">Waiting to connect.</span></div><div class="mini-panel"><span>Participants in room</span><strong id="guestParticipantCount">0</strong></div><section class="stack-tight"><h2 class="section-title">Participants</h2><div id="guestParticipantsList" class="people-grid"></div></section><div class="active-player"><div class="avatar" id="guestActiveAvatar">?</div><div><div class="muted">Current potato holder</div><div class="active-player-name" id="guestActiveName">Unknown</div></div></div><div class="panel"><div class="throw-board"><div class="eyebrow">Throw board</div><div id="guestBoardStage" class="board-stage"></div><div class="board-caption"><span>Only the current holder can throw from player view.</span><span id="guestBoardMessage">Join the room to activate player controls.</span></div></div></div><div class="question-card"><div class="eyebrow">Live prompt</div><h3 id="guestQuestionTitle">Waiting for the facilitator</h3><div class="big-question" id="guestQuestionText">The current question will appear here.</div></div></div></div>
 </div>
-
 <script>
 const defaultQuestions=['What is one win from this sprint?','What slowed you down recently?','What helped the team most this sprint?','What should we do differently next time?','One thing that made work easier this week?','If this sprint had a title, what would it be?','What is one small improvement we can try next sprint?','Who would you thank and for what?'];
-const params=new URLSearchParams(location.search); const mode=params.get('mode')==='join'?'join':'host'; const room=params.get('room')||Math.random().toString(36).slice(2,8).toUpperCase(); const wsUrl = `${location.origin.replace('http', 'ws')}/?room=${room}${mode==='host' ? '&host=1' : ''}`;
-let ws; const hostPeerId=`hot-potato-host-${room.toLowerCase()}`;
-let theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'; document.documentElement.setAttribute('data-theme',theme); const themeToggle=document.querySelector('[data-theme-toggle]'); function renderTheme(){ if(!themeToggle) return; themeToggle.innerHTML=theme==='dark'?'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path></svg>':'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>'; } renderTheme(); themeToggle?.addEventListener('click',()=>{theme=theme==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',theme);renderTheme();});
+const params=new URLSearchParams(location.search);
+const mode=params.get('mode')==='join'?'join':'host';
+const room=params.get('room')||Math.random().toString(36).slice(2,8).toUpperCase();
+
+const WS_BASE = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+const WS_URL = `${WS_BASE}/?room=${encodeURIComponent(room)}${mode==='host' ? '&host=1' : ''}`;
+
+let theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+document.documentElement.setAttribute('data-theme',theme);
+const themeToggle=document.querySelector('[data-theme-toggle]');
+function renderTheme(){
+  if(!themeToggle) return;
+  themeToggle.innerHTML=theme==='dark'
+    ?'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path></svg>'
+    :'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
+}
+renderTheme();
+themeToggle?.addEventListener('click',()=>{
+  theme=theme==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',theme);
+  renderTheme();
+});
+
 const initials=name=>name.split(/\s+/).filter(Boolean).slice(0,2).map(p=>p[0]?.toUpperCase()).join('')||'?';
-const seatPosition=(index,total)=>{const cols=total<=6?3:4; const rows=Math.ceil(total/cols); const col=index%cols; const row=Math.floor(index/cols); const x=cols===1?50:14+(72/(cols-1))*col; const y=rows===1?50:18+(64/(rows-1))*row; return {x,y};};
-if(mode==='host'){document.getElementById('hostApp').classList.remove('hidden'); runHost();} else {document.getElementById('joinApp').classList.remove('hidden'); runJoin();}
+const seatPosition=(index,total)=>{
+  const cols=total<=6?3:4;
+  const rows=Math.ceil(total/cols);
+  const col=index%cols;
+  const row=Math.floor(index/cols);
+  const x=cols===1?50:14+(72/(cols-1))*col;
+  const y=rows===1?50:18+(64/(rows-1))*row;
+  return {x,y};
+};
+
+if(mode==='host'){
+  document.getElementById('hostApp').classList.remove('hidden');
+  runHost();
+}else{
+  document.getElementById('joinApp').classList.remove('hidden');
+  runJoin();
+}
 
 function runHost(){
-  const els={names:document.getElementById('names'),minTime:document.getElementById('minTime'),maxTime:document.getElementById('maxTime'),customQuestions:document.getElementById('customQuestions'),startBtn:document.getElementById('startBtn'),nextBtn:document.getElementById('nextBtn'),resetBtn:document.getElementById('resetBtn'),playersList:document.getElementById('playersList'),timerValue:document.getElementById('timerValue'),timerHint:document.getElementById('timerHint'),activePlayerName:document.getElementById('activePlayerName'),activeAvatar:document.getElementById('activeAvatar'),questionTitle:document.getElementById('questionTitle'),questionText:document.getElementById('questionText'),modeLabel:document.getElementById('modeLabel'),statusText:document.getElementById('statusText'),roundValue:document.getElementById('roundValue'),countValue:document.getElementById('countValue'),questionCountValue:document.getElementById('questionCountValue'),throwCountValue:document.getElementById('throwCountValue'),boardStage:document.getElementById('boardStage'),boardMessage:document.getElementById('boardMessage'),shareLink:document.getElementById('shareLink'),copyLinkBtn:document.getElementById('copyLinkBtn'),roomCodeValue:document.getElementById('roomCodeValue'),remoteCountValue:document.getElementById('remoteCountValue')};
-  const state={basePlayers:[],players:[],questions:[...defaultQuestions],round:0,activeIndex:-1,timerId:null,countdown:0,running:false,lastQuestion:'',throwCount:0,currentQuestion:'',connections:[],participants:new Map(),potatoPosition:{x:50,y:50}};
-  els.roomCodeValue.textContent=room; const joinUrl=`${location.origin}${location.pathname}?mode=join&room=${encodeURIComponent(room)}`; els.shareLink.value=joinUrl;
-  els.copyLinkBtn.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(joinUrl); els.boardMessage.textContent='Join link copied.';}catch{els.shareLink.select(); document.execCommand('copy');}});
+  const els={
+    names:document.getElementById('names'),
+    minTime:document.getElementById('minTime'),
+    maxTime:document.getElementById('maxTime'),
+    customQuestions:document.getElementById('customQuestions'),
+    startBtn:document.getElementById('startBtn'),
+    nextBtn:document.getElementById('nextBtn'),
+    resetBtn:document.getElementById('resetBtn'),
+    playersList:document.getElementById('playersList'),
+    timerValue:document.getElementById('timerValue'),
+    timerHint:document.getElementById('timerHint'),
+    activePlayerName:document.getElementById('activePlayerName'),
+    activeAvatar:document.getElementById('activeAvatar'),
+    questionTitle:document.getElementById('questionTitle'),
+    questionText:document.getElementById('questionText'),
+    modeLabel:document.getElementById('modeLabel'),
+    statusText:document.getElementById('statusText'),
+    roundValue:document.getElementById('roundValue'),
+    countValue:document.getElementById('countValue'),
+    questionCountValue:document.getElementById('questionCountValue'),
+    throwCountValue:document.getElementById('throwCountValue'),
+    boardStage:document.getElementById('boardStage'),
+    boardMessage:document.getElementById('boardMessage'),
+    shareLink:document.getElementById('shareLink'),
+    copyLinkBtn:document.getElementById('copyLinkBtn'),
+    roomCodeValue:document.getElementById('roomCodeValue'),
+    remoteCountValue:document.getElementById('remoteCountValue')
+  };
+
+  const state={
+    basePlayers:[],
+    players:[],
+    questions:[...defaultQuestions],
+    round:0,
+    activeIndex:-1,
+    timerId:null,
+    countdown:0,
+    running:false,
+    lastQuestion:'',
+    throwCount:0,
+    currentQuestion:'',
+    participants:new Map(),
+    participantSeq:0,
+    potatoPosition:{x:50,y:50},
+    ws:null,
+    wsOpen:false
+  };
+
+  els.roomCodeValue.textContent=room;
+  const joinUrl=`${location.origin}${location.pathname}?mode=join&room=${encodeURIComponent(room)}`;
+  els.shareLink.value=joinUrl;
+
+  els.copyLinkBtn.addEventListener('click',async()=>{
+    try{
+      await navigator.clipboard.writeText(joinUrl);
+      els.boardMessage.textContent='Join link copied.';
+    }catch{
+      els.shareLink.select();
+      document.execCommand('copy');
+    }
+  });
+
   const parseBasePlayers=()=>[...new Set(els.names.value.split(/\n|,/).map(v=>v.trim()).filter(Boolean))].slice(0,10);
-  const parseQuestions=()=>{const custom=els.customQuestions.value.split('\n').map(v=>v.trim()).filter(Boolean); return custom.length?custom:[...defaultQuestions];};
-  const randomInt=(min,max)=>Math.floor(Math.random()*(max-min+1))+min; const fmt=v=>String(v).padStart(2,'0');
-  function participantOrder(){ return [...state.participants.values()].filter(p=>!p.watcher&&p.name).sort((a,b)=>a.joinedAt-b.joinedAt).map(p=>p.name.trim()); }
-  function rebuildPlayers(){ const merged=[]; state.basePlayers.forEach(name=>{ if(name && !merged.some(x=>x.toLowerCase()===name.toLowerCase())) merged.push(name); }); participantOrder().forEach(name=>{ if(name && !merged.some(x=>x.toLowerCase()===name.toLowerCase())) merged.push(name); }); state.players=merged.slice(0,10); if(state.activeIndex>=state.players.length) state.activeIndex=-1; }
-  function syncMeta(){els.roundValue.textContent=String(state.round); els.countValue.textContent=String(state.players.length); els.questionCountValue.textContent=String(state.questions.length); els.throwCountValue.textContent=String(state.throwCount); els.remoteCountValue.textContent=String([...state.participants.values()].filter(p=>!p.watcher).length);} 
-  function updateActiveDisplay(name){els.activePlayerName.textContent=name||'Nobody yet'; els.activeAvatar.textContent=initials(name||'?');}
-  function stopTimer(){if(state.timerId) clearInterval(state.timerId); state.timerId=null; state.running=false;}
-  function pickQuestion(){const pool=state.questions.filter(q=>q!==state.lastQuestion); const src=pool.length?pool:state.questions; const chosen=src[randomInt(0,src.length-1)]; state.lastQuestion=chosen; return chosen;}
-  function pickNextPlayer(){if(!state.players.length) return -1; if(state.players.length===1) return 0; let next=randomInt(0,state.players.length-1); while(next===state.activeIndex) next=randomInt(0,state.players.length-1); return next;}
-  function renderParticipantsList(){ els.playersList.innerHTML=''; state.players.forEach((name,index)=>{ const chip=document.createElement('button'); chip.type='button'; chip.className='person-chip clickable'+(index===state.activeIndex?' active':'')+(state.running&&index!==state.activeIndex?' throw-target':''); chip.innerHTML=`<div class="avatar">${initials(name)}</div><div>${name}</div>`; chip.addEventListener('click',()=>throwTo(index,'host',true)); els.playersList.appendChild(chip); }); }
-  function renderBoard(){ els.boardStage.innerHTML=''; state.players.forEach((name,index)=>{ const pos=seatPosition(index,state.players.length||1); const seat=document.createElement('div'); seat.className='seat'; seat.style.left=`${pos.x}%`; seat.style.top=`${pos.y}%`; seat.innerHTML=`<button type="button" class="seat-btn ${index===state.activeIndex?'active':''} ${state.running&&index!==state.activeIndex?'targetable':''}"><div class="avatar">${initials(name)}</div></button><div class="seat-name">${name}</div>`; seat.querySelector('button').addEventListener('click',()=>throwTo(index,'host',true)); els.boardStage.appendChild(seat); }); const potato=document.createElement('div'); potato.className='potato'; potato.id='hostPotato'; potato.innerHTML='<svg viewBox="0 0 64 64" fill="none"><path d="M25 8C37 2 54 10 57 25c3 15-5 28-18 31C22 60 8 49 7 33 6 22 14 12 25 8Z" fill="#c98542"/><circle cx="22" cy="20" r="2.4" fill="#9a602f"/><circle cx="40" cy="23" r="2.7" fill="#9a602f"/><circle cx="32" cy="38" r="3.2" fill="#9a602f"/></svg>'; els.boardStage.appendChild(potato); updatePotato(false); }
-  function updatePotato(animated=false,fromPos=null,toPos=null){const potato=document.getElementById('hostPotato'); if(!potato||state.activeIndex<0) return; const target=toPos||seatPosition(state.activeIndex,state.players.length); if(!animated){potato.style.transition='none'; potato.style.left=`${target.x}%`; potato.style.top=`${target.y}%`; requestAnimationFrame(()=>potato.style.transition='left 420ms cubic-bezier(.16,1,.3,1), top 420ms cubic-bezier(.16,1,.3,1)'); state.potatoPosition=target; return;} const start=fromPos||state.potatoPosition; potato.style.left=`${start.x}%`; potato.style.top=`${start.y}%`; requestAnimationFrame(()=>{potato.style.transition='left 420ms cubic-bezier(.16,1,.3,1), top 420ms cubic-bezier(.16,1,.3,1)'; potato.style.left=`${target.x}%`; potato.style.top=`${target.y}%`;}); state.potatoPosition=target; }
-  function snapshot(){ return {room,players:state.players,participants:[...state.participants.values()].sort((a,b)=>a.joinedAt-b.joinedAt),activeIndex:state.activeIndex,activeName:state.players[state.activeIndex]||'',round:state.round,running:state.running,countdown:state.countdown,question:state.currentQuestion,questionTitle:els.questionTitle.textContent,throwCount:state.throwCount}; }
-  function broadcast(){ const msg={type:'state',data:snapshot()}; state.connections=state.connections.filter(c=>c.open); state.connections.forEach(c=>c.send(msg)); }
-  function refreshAll(){ rebuildPlayers(); renderParticipantsList(); renderBoard(); syncMeta(); broadcast(); }
-  function throwTo(index,actor,forceHost=false){ if(!state.running||index===state.activeIndex||index<0||index>=state.players.length) return; const from=state.activeIndex>=0?seatPosition(state.activeIndex,state.players.length):seatPosition(index,state.players.length); const to=seatPosition(index,state.players.length); state.activeIndex=index; state.throwCount+=1; updateActiveDisplay(state.players[index]); renderParticipantsList(); renderBoard(); updatePotato(true,from,to); syncMeta(); els.boardMessage.textContent=`Potato thrown to ${state.players[index]} by ${actor}.`; els.statusText.textContent=`The potato is now with ${state.players[index]}.`; broadcast(); }
-  function finishRound(){ stopTimer(); const player=state.players[state.activeIndex]; state.currentQuestion=pickQuestion(); els.timerValue.textContent='00'; els.timerHint.textContent='Time is up'; els.timerValue.classList.add('pulse'); els.questionTitle.textContent=`${player} answers now`; els.questionText.textContent=state.currentQuestion; els.modeLabel.textContent='Answering'; els.statusText.textContent=`${player} got the potato.`; els.nextBtn.disabled=false; broadcast(); }
-  function startRound(){ if(state.players.length<2) return; stopTimer(); state.round+=1; state.activeIndex=pickNextPlayer(); state.countdown=randomInt(Number(els.minTime.value),Number(els.maxTime.value)); state.running=true; els.timerValue.classList.remove('pulse'); els.timerValue.textContent=fmt(state.countdown); els.timerHint.textContent='Pass the potato'; state.currentQuestion='Pass the potato until the timer stops.'; updateActiveDisplay(state.players[state.activeIndex]); els.questionTitle.textContent='Keep it moving'; els.questionText.textContent=state.currentQuestion; els.modeLabel.textContent='Round in progress'; els.statusText.textContent=`Round ${state.round} is live.`; els.nextBtn.disabled=true; renderParticipantsList(); renderBoard(); updatePotato(false); syncMeta(); broadcast(); state.timerId=setInterval(()=>{ state.countdown-=1; els.timerValue.textContent=fmt(Math.max(state.countdown,0)); if(state.countdown<=5) els.timerValue.classList.add('pulse'); broadcast(); if(state.countdown<=0) finishRound(); },1000); }
-  function validate(){ state.basePlayers=parseBasePlayers(); state.questions=parseQuestions(); refreshAll(); return state.players.length>=2; }
-  function reset(){ stopTimer(); state.round=0; state.activeIndex=-1; state.lastQuestion=''; state.throwCount=0; state.currentQuestion=''; validate(); els.timerValue.textContent='00'; els.timerHint.textContent='Waiting for the first round'; els.questionTitle.textContent='The first prompt appears when the timer stops.'; els.questionText.textContent='Press Start game to begin.'; els.modeLabel.textContent='Ready'; els.statusText.textContent=state.players.length>=2?'Press Start game when everyone is ready.':'Wait until at least 2 players have joined.'; els.nextBtn.disabled=true; updateActiveDisplay(''); broadcast(); }
-  const peer=new Peer(hostPeerId); peer.on('connection',conn=>{ state.connections.push(conn); conn.on('open',()=>conn.send({type:'state',data:snapshot()})); conn.on('data',msg=>{ if(msg?.type==='intro'){ state.participants.set(conn.peer,{peerId:conn.peer,name:msg.name||'Guest',watcher:!!msg.watcher,joinedAt:Date.now()+Math.random()}); refreshAll(); }
-      if(msg?.type==='throwRequest'){ const actor=String(msg.actor||'player'); const target=String(msg.targetName||''); const holder=state.players[state.activeIndex]||''; const actorAllowed = actor.toLowerCase()==='host' || (holder && actor.toLowerCase()===holder.toLowerCase()); const idx=state.players.findIndex(p=>p.toLowerCase()===target.toLowerCase()); if(actorAllowed && idx!==-1) throwTo(idx,actor,actor.toLowerCase()==='host'); }
-    }); conn.on('close',()=>{ state.connections=state.connections.filter(c=>c!==conn); state.participants.delete(conn.peer); refreshAll(); }); });
-  peer.on('error',err=>{els.boardMessage.textContent=`Connection note: ${err.type||'peer error'}`;});
-  els.startBtn.addEventListener('click',()=>{ if(validate()) startRound(); else {els.modeLabel.textContent='Needs players'; els.statusText.textContent='At least 2 players are needed.';} });
-  els.nextBtn.addEventListener('click',()=>{ if(validate()) startRound(); }); els.resetBtn.addEventListener('click',reset); [els.names,els.minTime,els.maxTime,els.customQuestions].forEach(el=>el.addEventListener('input',validate)); reset();
+  const parseQuestions=()=>{
+    const custom=els.customQuestions.value.split('\n').map(v=>v.trim()).filter(Boolean);
+    return custom.length?custom:[...defaultQuestions];
+  };
+  const randomInt=(min,max)=>Math.floor(Math.random()*(max-min+1))+min;
+  const fmt=v=>String(v).padStart(2,'0');
+
+  function participantOrder(){
+    return [...state.participants.values()]
+      .filter(p=>!p.watcher&&p.name)
+      .sort((a,b)=>a.joinedAt-b.joinedAt)
+      .map(p=>p.name.trim());
+  }
+
+  function rebuildPlayers(){
+    const merged=[];
+    state.basePlayers.forEach(name=>{
+      if(name && !merged.some(x=>x.toLowerCase()===name.toLowerCase())) merged.push(name);
+    });
+    participantOrder().forEach(name=>{
+      if(name && !merged.some(x=>x.toLowerCase()===name.toLowerCase())) merged.push(name);
+    });
+    state.players=merged.slice(0,10);
+    if(state.activeIndex>=state.players.length) state.activeIndex=-1;
+  }
+
+  function syncMeta(){
+    els.roundValue.textContent=String(state.round);
+    els.countValue.textContent=String(state.players.length);
+    els.questionCountValue.textContent=String(state.questions.length);
+    els.throwCountValue.textContent=String(state.throwCount);
+    els.remoteCountValue.textContent=String([...state.participants.values()].filter(p=>!p.watcher).length);
+  }
+
+  function updateActiveDisplay(name){
+    els.activePlayerName.textContent=name||'Nobody yet';
+    els.activeAvatar.textContent=initials(name||'?');
+  }
+
+  function stopTimer(){
+    if(state.timerId) clearInterval(state.timerId);
+    state.timerId=null;
+    state.running=false;
+  }
+
+  function pickQuestion(){
+    const pool=state.questions.filter(q=>q!==state.lastQuestion);
+    const src=pool.length?pool:state.questions;
+    const chosen=src[randomInt(0,src.length-1)];
+    state.lastQuestion=chosen;
+    return chosen;
+  }
+
+  function pickNextPlayer(){
+    if(!state.players.length) return -1;
+    if(state.players.length===1) return 0;
+    let next=randomInt(0,state.players.length-1);
+    while(next===state.activeIndex) next=randomInt(0,state.players.length-1);
+    return next;
+  }
+
+  function renderParticipantsList(){
+    els.playersList.innerHTML='';
+    state.players.forEach((name,index)=>{
+      const chip=document.createElement('button');
+      chip.type='button';
+      chip.className='person-chip clickable'+(index===state.activeIndex?' active':'')+(state.running&&index!==state.activeIndex?' throw-target':'');
+      chip.innerHTML=`<div class="avatar">${initials(name)}</div><div>${name}</div>`;
+      chip.addEventListener('click',()=>throwTo(index,'host',true));
+      els.playersList.appendChild(chip);
+    });
+  }
+
+  function renderBoard(){
+    els.boardStage.innerHTML='';
+    state.players.forEach((name,index)=>{
+      const pos=seatPosition(index,state.players.length||1);
+      const seat=document.createElement('div');
+      seat.className='seat';
+      seat.style.left=`${pos.x}%`;
+      seat.style.top=`${pos.y}%`;
+      seat.innerHTML=`<button type="button" class="seat-btn ${index===state.activeIndex?'active':''} ${state.running&&index!==state.activeIndex?'targetable':''}"><div class="avatar">${initials(name)}</div></button><div class="seat-name">${name}</div>`;
+      seat.querySelector('button').addEventListener('click',()=>throwTo(index,'host',true));
+      els.boardStage.appendChild(seat);
+    });
+    const potato=document.createElement('div');
+    potato.className='potato';
+    potato.id='hostPotato';
+    potato.innerHTML='<svg viewBox="0 0 64 64" fill="none"><path d="M25 8C37 2 54 10 57 25c3 15-5 28-18 31C22 60 8 49 7 33 6 22 14 12 25 8Z" fill="#c98542"/><circle cx="22" cy="20" r="2.4" fill="#9a602f"/><circle cx="40" cy="23" r="2.7" fill="#9a602f"/><circle cx="32" cy="38" r="3.2" fill="#9a602f"/></svg>';
+    els.boardStage.appendChild(potato);
+    updatePotato(false);
+  }
+
+  function updatePotato(animated=false,fromPos=null,toPos=null){
+    const potato=document.getElementById('hostPotato');
+    if(!potato||state.activeIndex<0) return;
+    const target=toPos||seatPosition(state.activeIndex,state.players.length);
+    if(!animated){
+      potato.style.transition='none';
+      potato.style.left=`${target.x}%`;
+      potato.style.top=`${target.y}%`;
+      requestAnimationFrame(()=>potato.style.transition='left 420ms cubic-bezier(.16,1,.3,1), top 420ms cubic-bezier(.16,1,.3,1)');
+      state.potatoPosition=target;
+      return;
+    }
+    const start=fromPos||state.potatoPosition;
+    potato.style.left=`${start.x}%`;
+    potato.style.top=`${start.y}%`;
+    requestAnimationFrame(()=>{
+      potato.style.transition='left 420ms cubic-bezier(.16,1,.3,1), top 420ms cubic-bezier(.16,1,.3,1)';
+      potato.style.left=`${target.x}%`;
+      potato.style.top=`${target.y}%`;
+    });
+    state.potatoPosition=target;
+  }
+
+  function snapshot(){
+    return {
+      room,
+      players:state.players,
+      participants:[...state.participants.values()].sort((a,b)=>a.joinedAt-b.joinedAt),
+      activeIndex:state.activeIndex,
+      activeName:state.players[state.activeIndex]||'',
+      round:state.round,
+      running:state.running,
+      countdown:state.countdown,
+      question:state.currentQuestion,
+      questionTitle:els.questionTitle.textContent,
+      throwCount:state.throwCount
+    };
+  }
+
+  function broadcast(){
+    if(state.ws && state.ws.readyState===WebSocket.OPEN){
+      state.ws.send(JSON.stringify({type:'state',data:snapshot()}));
+    }
+  }
+
+  function refreshAll(){
+    rebuildPlayers();
+    renderParticipantsList();
+    renderBoard();
+    syncMeta();
+    broadcast();
+  }
+
+  function throwTo(index,actor,forceHost=false){
+    if(!state.running||index===state.activeIndex||index<0||index>=state.players.length) return;
+    const from=state.activeIndex>=0?seatPosition(state.activeIndex,state.players.length):seatPosition(index,state.players.length);
+    const to=seatPosition(index,state.players.length);
+    state.activeIndex=index;
+    state.throwCount+=1;
+    updateActiveDisplay(state.players[index]);
+    renderParticipantsList();
+    renderBoard();
+    updatePotato(true,from,to);
+    syncMeta();
+    els.boardMessage.textContent=`Potato thrown to ${state.players[index]} by ${actor}.`;
+    els.statusText.textContent=`The potato is now with ${state.players[index]}.`;
+    broadcast();
+  }
+
+  function finishRound(){
+    stopTimer();
+    const player=state.players[state.activeIndex];
+    state.currentQuestion=pickQuestion();
+    els.timerValue.textContent='00';
+    els.timerHint.textContent='Time is up';
+    els.timerValue.classList.add('pulse');
+    els.questionTitle.textContent=`${player} answers now`;
+    els.questionText.textContent=state.currentQuestion;
+    els.modeLabel.textContent='Answering';
+    els.statusText.textContent=`${player} got the potato.`;
+    els.nextBtn.disabled=false;
+    broadcast();
+  }
+
+  function startRound(){
+    if(state.players.length<2) return;
+    stopTimer();
+    state.round+=1;
+    state.activeIndex=pickNextPlayer();
+    state.countdown=randomInt(Number(els.minTime.value),Number(els.maxTime.value));
+    state.running=true;
+    els.timerValue.classList.remove('pulse');
+    els.timerValue.textContent=fmt(state.countdown);
+    els.timerHint.textContent='Pass the potato';
+    state.currentQuestion='Pass the potato until the timer stops.';
+    updateActiveDisplay(state.players[state.activeIndex]);
+    els.questionTitle.textContent='Keep it moving';
+    els.questionText.textContent=state.currentQuestion;
+    els.modeLabel.textContent='Round in progress';
+    els.statusText.textContent=`Round ${state.round} is live.`;
+    els.nextBtn.disabled=true;
+    renderParticipantsList();
+    renderBoard();
+    updatePotato(false);
+    syncMeta();
+    broadcast();
+    state.timerId=setInterval(()=>{
+      state.countdown-=1;
+      els.timerValue.textContent=fmt(Math.max(state.countdown,0));
+      if(state.countdown<=5) els.timerValue.classList.add('pulse');
+      broadcast();
+      if(state.countdown<=0) finishRound();
+    },1000);
+  }
+
+  function validate(){
+    state.basePlayers=parseBasePlayers();
+    state.questions=parseQuestions();
+    refreshAll();
+    return state.players.length>=2;
+  }
+
+  function reset(){
+    stopTimer();
+    state.round=0;
+    state.activeIndex=-1;
+    state.lastQuestion='';
+    state.throwCount=0;
+    state.currentQuestion='';
+    validate();
+    els.timerValue.textContent='00';
+    els.timerHint.textContent='Waiting for the first round';
+    els.questionTitle.textContent='The first prompt appears when the timer stops.';
+    els.questionText.textContent='Press Start game to begin.';
+    els.modeLabel.textContent='Ready';
+    els.statusText.textContent=state.players.length>=2?'Press Start game when everyone is ready.':'Wait until at least 2 players have joined.';
+    els.nextBtn.disabled=true;
+    updateActiveDisplay('');
+    broadcast();
+  }
+
+  function connectHostSocket(){
+    const ws=new WebSocket(WS_URL);
+    state.ws=ws;
+    els.boardMessage.textContent='Connecting room...';
+
+    ws.addEventListener('open',()=>{
+      state.wsOpen=true;
+      els.boardMessage.textContent='Room live. Share the join link.';
+      broadcast();
+    });
+
+    ws.addEventListener('message',(event)=>{
+      let msg;
+      try{ msg=JSON.parse(event.data); }catch{return;}
+
+      if(msg?.type==='intro'){
+        const clientId=String(msg.clientId||`client-${++state.participantSeq}`);
+        state.participants.set(clientId,{
+          peerId:clientId,
+          name:msg.name||'Guest',
+          watcher:!!msg.watcher,
+          joinedAt:msg.joinedAt||Date.now()+Math.random()
+        });
+        refreshAll();
+      }
+
+      if(msg?.type==='throwRequest'){
+        const actor=String(msg.actor||'player');
+        const target=String(msg.targetName||'');
+        const holder=state.players[state.activeIndex]||'';
+        const actorAllowed=actor.toLowerCase()==='host'||(holder&&actor.toLowerCase()===holder.toLowerCase());
+        const idx=state.players.findIndex(p=>p.toLowerCase()===target.toLowerCase());
+        if(actorAllowed && idx!==-1) throwTo(idx,actor,actor.toLowerCase()==='host');
+      }
+
+      if(msg?.type==='leave' && msg.clientId){
+        state.participants.delete(String(msg.clientId));
+        refreshAll();
+      }
+    });
+
+    ws.addEventListener('close',()=>{
+      state.wsOpen=false;
+      els.boardMessage.textContent='Connection lost. Retrying...';
+      setTimeout(connectHostSocket,1500);
+    });
+
+    ws.addEventListener('error',()=>{
+      els.boardMessage.textContent='Socket error. Retrying...';
+    });
+  }
+
+  els.startBtn.addEventListener('click',()=>{
+    if(validate()) startRound();
+    else{
+      els.modeLabel.textContent='Needs players';
+      els.statusText.textContent='At least 2 players are needed.';
+    }
+  });
+  els.nextBtn.addEventListener('click',()=>{ if(validate()) startRound(); });
+  els.resetBtn.addEventListener('click',reset);
+  [els.names,els.minTime,els.maxTime,els.customQuestions].forEach(el=>el.addEventListener('input',validate));
+
+  reset();
+  connectHostSocket();
 }
 
 function runJoin(){
-  const els={joinRoom:document.getElementById('joinRoom'),joinName:document.getElementById('joinName'),joinBtn:document.getElementById('joinBtn'),watchOnlyBtn:document.getElementById('watchOnlyBtn'),joinStatus:document.getElementById('joinStatus'),joinStatusText:document.getElementById('joinStatusText'),guestParticipantCount:document.getElementById('guestParticipantCount'),guestParticipantsList:document.getElementById('guestParticipantsList'),guestActiveAvatar:document.getElementById('guestActiveAvatar'),guestActiveName:document.getElementById('guestActiveName'),guestBoardStage:document.getElementById('guestBoardStage'),guestBoardMessage:document.getElementById('guestBoardMessage'),guestQuestionTitle:document.getElementById('guestQuestionTitle'),guestQuestionText:document.getElementById('guestQuestionText')};
-  els.joinRoom.value=room; let peer=null,conn=null,myName='',watchOnly=false,latestState=null;
-  function canThrow(payload){ return !!payload.running && !watchOnly && myName && payload.activeName && myName.toLowerCase()===payload.activeName.toLowerCase(); }
-  function orderedPlayers(payload){ return payload.players || []; }
-  function renderGuestParticipants(payload){ const players=orderedPlayers(payload); els.guestParticipantsList.innerHTML=''; players.forEach((name,index)=>{ const chip=document.createElement('button'); chip.type='button'; const isMe=myName&&name.toLowerCase()===myName.toLowerCase(); const clickable=canThrow(payload) && index!==payload.activeIndex && conn?.open; chip.className='person-chip'+(index===payload.activeIndex?' active':'')+(clickable?' clickable throw-target':'')+(isMe?' participant-me':''); chip.innerHTML=`<div class="avatar">${initials(name)}</div><div>${name}</div>`; if(clickable){ chip.addEventListener('click',()=>{ conn.send({type:'throwRequest',targetName:name,actor:myName}); els.guestBoardMessage.textContent=`Throw requested to ${name}.`; }); } els.guestParticipantsList.appendChild(chip); }); els.guestParticipantCount.textContent=String(players.length); }
-  function renderGuestBoard(payload){ const players=orderedPlayers(payload); els.guestBoardStage.innerHTML=''; players.forEach((name,index)=>{ const pos=seatPosition(index,players.length||1); const active=index===payload.activeIndex; const clickable=canThrow(payload)&&!active&&conn?.open; const seat=document.createElement('div'); seat.className='seat'; seat.style.left=`${pos.x}%`; seat.style.top=`${pos.y}%`; seat.innerHTML=`<button type="button" class="seat-btn ${active?'active':''} ${clickable?'targetable':''}"><div class="avatar">${initials(name)}</div></button><div class="seat-name">${name}</div>`; if(clickable){ seat.querySelector('button').addEventListener('click',()=>{ conn.send({type:'throwRequest',targetName:name,actor:myName}); els.guestBoardMessage.textContent=`Throw requested to ${name}.`; }); } els.guestBoardStage.appendChild(seat); }); if(players.length){ const potato=document.createElement('div'); potato.className='potato'; const pos=payload.activeIndex>=0?seatPosition(payload.activeIndex,players.length):{x:50,y:50}; potato.style.left=`${pos.x}%`; potato.style.top=`${pos.y}%`; potato.innerHTML='<svg viewBox="0 0 64 64" fill="none"><path d="M25 8C37 2 54 10 57 25c3 15-5 28-18 31C22 60 8 49 7 33 6 22 14 12 25 8Z" fill="#c98542"/><circle cx="22" cy="20" r="2.4" fill="#9a602f"/><circle cx="40" cy="23" r="2.7" fill="#9a602f"/><circle cx="32" cy="38" r="3.2" fill="#9a602f"/></svg>'; els.guestBoardStage.appendChild(potato); } }
-  function applyState(payload){ latestState=payload; renderGuestParticipants(payload); renderGuestBoard(payload); els.guestActiveName.textContent=payload.activeName||'Nobody yet'; els.guestActiveAvatar.textContent=initials(payload.activeName||'?'); els.guestQuestionTitle.textContent=payload.questionTitle||'Waiting for the facilitator'; els.guestQuestionText.textContent=payload.question||'The current question will appear here.'; els.joinStatus.textContent=payload.running?`Live round ${payload.round}`:'Connected'; els.joinStatusText.textContent=payload.running?`${payload.activeName||'Someone'} has the potato, ${String(payload.countdown).padStart(2,'0')} seconds left.`:`Connected to room ${payload.room}.`; els.guestBoardMessage.textContent = canThrow(payload) ? 'You have the potato. Click another player to throw.' : (watchOnly ? 'Watch mode is active.' : 'You can throw only when you are the current holder.'); }
-  function connect(asWatcher){ watchOnly=asWatcher; myName=(els.joinName.value.trim()||'Guest'); const guestId=`hot-potato-guest-${room.toLowerCase()}-${Math.random().toString(36).slice(2,7)}`; peer=new Peer(guestId); peer.on('open',()=>{ conn=peer.connect(hostPeerId,{reliable:true}); conn.on('open',()=>{ els.joinStatus.textContent='Connected'; els.joinStatusText.textContent=`Joined room ${room}.`; conn.send({type:'intro',name:myName,watcher:watchOnly}); }); conn.on('data',msg=>{ if(msg?.type==='state') applyState(msg.data); }); conn.on('error',()=>{ els.joinStatus.textContent='Connection error'; els.joinStatusText.textContent='Could not receive host updates.'; }); }); peer.on('error',()=>{ els.joinStatus.textContent='Connection error'; els.joinStatusText.textContent='The facilitator may not be online yet.'; }); }
-  els.joinBtn.addEventListener('click',()=>connect(false)); els.watchOnlyBtn.addEventListener('click',()=>connect(true));
-}
-  function initWS() {
-  ws = new WebSocket(wsUrl);
-  ws.onopen = () => {
-    console.log(mode === 'host' ? 'Host WS ready' : 'Player joined room ' + room);
-    if (mode !== 'host') ws.send(JSON.stringify({type: 'intro', name: els.joinName.value || 'Guest'}));
-    // Trigger initial refreshAll/validate
+  const els={
+    joinRoom:document.getElementById('joinRoom'),
+    joinName:document.getElementById('joinName'),
+    joinBtn:document.getElementById('joinBtn'),
+    watchOnlyBtn:document.getElementById('watchOnlyBtn'),
+    joinStatus:document.getElementById('joinStatus'),
+    joinStatusText:document.getElementById('joinStatusText'),
+    guestParticipantCount:document.getElementById('guestParticipantCount'),
+    guestParticipantsList:document.getElementById('guestParticipantsList'),
+    guestActiveAvatar:document.getElementById('guestActiveAvatar'),
+    guestActiveName:document.getElementById('guestActiveName'),
+    guestBoardStage:document.getElementById('guestBoardStage'),
+    guestBoardMessage:document.getElementById('guestBoardMessage'),
+    guestQuestionTitle:document.getElementById('guestQuestionTitle'),
+    guestQuestionText:document.getElementById('guestQuestionText')
   };
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === 'state') {
-      // Call your existing applyState(msg.data) or snapshot logic
-      latestState = msg.data;
-      refreshAll();  // Adapt to your functions
-    } else if (msg.type === 'throwRequest') {
-      // Host: process as before from conn.ondata
-      const actor = msg.actor || 'player';
-      const targetName = msg.targetName;
-      const idx = state.players.findIndex(p => p.toLowerCase() === targetName.toLowerCase());
-      if (idx !== -1) throwTo(idx, actor, false);
-    } else if (msg.type === 'joined') {
-      els.joinStatus.textContent('Connected');
-    }
-  };
-}
 
-// In runHost broadcast():
-function broadcast() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({type: 'state', data: snapshot()}));
+  els.joinRoom.value=room;
+
+  let ws=null,myName='',watchOnly=false,latestState=null,clientId=null,hasConnected=false;
+
+  function canThrow(payload){
+    return !!payload.running && !watchOnly && myName && payload.activeName && myName.toLowerCase()===payload.activeName.toLowerCase();
   }
+
+  function orderedPlayers(payload){
+    return payload.players || [];
+  }
+
+  function sendThrow(targetName){
+    if(ws && ws.readyState===WebSocket.OPEN){
+      ws.send(JSON.stringify({type:'throwRequest',targetName,actor:myName,clientId}));
+    }
+  }
+
+  function renderGuestParticipants(payload){
+    const players=orderedPlayers(payload);
+    els.guestParticipantsList.innerHTML='';
+    players.forEach((name,index)=>{
+      const chip=document.createElement('button');
+      chip.type='button';
+      const isMe=myName&&name.toLowerCase()===myName.toLowerCase();
+      const clickable=canThrow(payload) && index!==payload.activeIndex && ws?.readyState===WebSocket.OPEN;
+      chip.className='person-chip'+(index===payload.activeIndex?' active':'')+(clickable?' clickable throw-target':'')+(isMe?' participant-me':'');
+      chip.innerHTML=`<div class="avatar">${initials(name)}</div><div>${name}</div>`;
+      if(clickable){
+        chip.addEventListener('click',()=>{
+          sendThrow(name);
+          els.guestBoardMessage.textContent=`Throw requested to ${name}.`;
+        });
+      }
+      els.guestParticipantsList.appendChild(chip);
+    });
+    els.guestParticipantCount.textContent=String(players.length);
+  }
+
+  function renderGuestBoard(payload){
+    const players=orderedPlayers(payload);
+    els.guestBoardStage.innerHTML='';
+    players.forEach((name,index)=>{
+      const pos=seatPosition(index,players.length||1);
+      const active=index===payload.activeIndex;
+      const clickable=canThrow(payload)&&!active&&ws?.readyState===WebSocket.OPEN;
+      const seat=document.createElement('div');
+      seat.className='seat';
+      seat.style.left=`${pos.x}%`;
+      seat.style.top=`${pos.y}%`;
+      seat.innerHTML=`<button type="button" class="seat-btn ${active?'active':''} ${clickable?'targetable':''}"><div class="avatar">${initials(name)}</div></button><div class="seat-name">${name}</div>`;
+      if(clickable){
+        seat.querySelector('button').addEventListener('click',()=>{
+          sendThrow(name);
+          els.guestBoardMessage.textContent=`Throw requested to ${name}.`;
+        });
+      }
+      els.guestBoardStage.appendChild(seat);
+    });
+
+    if(players.length){
+      const potato=document.createElement('div');
+      potato.className='potato';
+      const pos=payload.activeIndex>=0?seatPosition(payload.activeIndex,players.length):{x:50,y:50};
+      potato.style.left=`${pos.x}%`;
+      potato.style.top=`${pos.y}%`;
+      potato.innerHTML='<svg viewBox="0 0 64 64" fill="none"><path d="M25 8C37 2 54 10 57 25c3 15-5 28-18 31C22 60 8 49 7 33 6 22 14 12 25 8Z" fill="#c98542"/><circle cx="22" cy="20" r="2.4" fill="#9a602f"/><circle cx="40" cy="23" r="2.7" fill="#9a602f"/><circle cx="32" cy="38" r="3.2" fill="#9a602f"/></svg>';
+      els.guestBoardStage.appendChild(potato);
+    }
+  }
+
+  function applyState(payload){
+    latestState=payload;
+    renderGuestParticipants(payload);
+    renderGuestBoard(payload);
+    els.guestActiveName.textContent=payload.activeName||'Nobody yet';
+    els.guestActiveAvatar.textContent=initials(payload.activeName||'?');
+    els.guestQuestionTitle.textContent=payload.questionTitle||'Waiting for the facilitator';
+    els.guestQuestionText.textContent=payload.question||'The current question will appear here.';
+    els.joinStatus.textContent=payload.running?`Live round ${payload.round}`:'Connected';
+    els.joinStatusText.textContent=payload.running?`${payload.activeName||'Someone'} has the potato, ${String(payload.countdown).padStart(2,'0')} seconds left.`:`Connected to room ${payload.room}.`;
+    els.guestBoardMessage.textContent=canThrow(payload)
+      ? 'You have the potato. Click another player to throw.'
+      : (watchOnly ? 'Watch mode is active.' : 'You can throw only when you are the current holder.');
+  }
+
+  function connect(asWatcher){
+    if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+
+    watchOnly=asWatcher;
+    myName=(els.joinName.value.trim()||'Guest');
+    els.joinStatus.textContent='Connecting';
+    els.joinStatusText.textContent=`Joining room ${room}...`;
+
+    ws=new WebSocket(WS_URL);
+
+    ws.addEventListener('open',()=>{
+      hasConnected=true;
+      clientId=`client-${Math.random().toString(36).slice(2,10)}`;
+      els.joinStatus.textContent='Connected';
+      els.joinStatusText.textContent=`Joined room ${room}. Waiting for host state...`;
+      ws.send(JSON.stringify({
+        type:'intro',
+        clientId,
+        name:myName,
+        watcher:watchOnly,
+        joinedAt:Date.now()
+      }));
+    });
+
+    ws.addEventListener('message',(event)=>{
+      let msg;
+      try{ msg=JSON.parse(event.data); }catch{return;}
+      if(msg?.type==='state') applyState(msg.data);
+      if(msg?.type==='hostOffline'){
+        els.joinStatus.textContent='Host offline';
+        els.joinStatusText.textContent='The facilitator disconnected.';
+      }
+    });
+
+    ws.addEventListener('close',()=>{
+      els.joinStatus.textContent='Disconnected';
+      els.joinStatusText.textContent=hasConnected?'Connection lost.':'Could not connect to room.';
+    });
+
+    ws.addEventListener('error',()=>{
+      els.joinStatus.textContent='Connection error';
+      els.joinStatusText.textContent='Could not reach the game server.';
+    });
+  }
+
+  els.joinBtn.addEventListener('click',()=>connect(false));
+  els.watchOnlyBtn.addEventListener('click',()=>connect(true));
 }
-
-// In player throw clicks:
-conn.send → ws.send(JSON.stringify({type: 'throwRequest', targetName: name, actor: myName}));
-
-// Call initWS() in if(mode==='host') runHost(); else runJoin();
 </script>
+
 </body>
 </html>
