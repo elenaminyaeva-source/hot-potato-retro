@@ -37,10 +37,10 @@
   <div class="panel"><div class="panel-inner stack"><div><div class="eyebrow">Player</div><h1 style="margin:.9rem 0 0;font-family:var(--font-display);font-size:var(--text-2xl);line-height:1">Join and pass the potato</h1><p class="muted">The player board now follows the exact host order. You can throw only when your name matches the current potato holder.</p></div><div class="inline-fields"><div class="field"><label for="joinName">Your name</label><input id="joinName" type="text" placeholder="Your name"></div><div class="field"><label for="joinRoom">Room code</label><input id="joinRoom" type="text" readonly></div></div><div class="controls"><button class="btn btn-primary" id="joinBtn">Join game</button><button class="btn btn-ghost" id="watchOnlyBtn">Watch only</button></div><div class="status-card"><span>Connection</span><strong id="joinStatus">Not connected</strong><span id="joinStatusText">Waiting to connect.</span></div><div class="mini-panel"><span>Participants in room</span><strong id="guestParticipantCount">0</strong></div><section class="stack-tight"><h2 class="section-title">Participants</h2><div id="guestParticipantsList" class="people-grid"></div></section><div class="active-player"><div class="avatar" id="guestActiveAvatar">?</div><div><div class="muted">Current potato holder</div><div class="active-player-name" id="guestActiveName">Unknown</div></div></div><div class="panel"><div class="throw-board"><div class="eyebrow">Throw board</div><div id="guestBoardStage" class="board-stage"></div><div class="board-caption"><span>Only the current holder can throw from player view.</span><span id="guestBoardMessage">Join the room to activate player controls.</span></div></div></div><div class="question-card"><div class="eyebrow">Live prompt</div><h3 id="guestQuestionTitle">Waiting for the facilitator</h3><div class="big-question" id="guestQuestionText">The current question will appear here.</div></div></div></div>
 </div>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const defaultQuestions=['What is one win from this sprint?','What slowed you down recently?','What helped the team most this sprint?','What should we do differently next time?','One thing that made work easier this week?','If this sprint had a title, what would it be?','What is one small improvement we can try next sprint?','Who would you thank and for what?'];
-const params=new URLSearchParams(location.search); const mode=params.get('mode')==='join'?'join':'host'; const room=params.get('room')||Math.random().toString(36).slice(2,8).toUpperCase(); const hostPeerId=`hot-potato-host-${room.toLowerCase()}`;
+const params=new URLSearchParams(location.search); const mode=params.get('mode')==='join'?'join':'host'; const room=params.get('room')||Math.random().toString(36).slice(2,8).toUpperCase(); const wsUrl = `${location.origin.replace('http', 'ws')}/?room=${room}${mode==='host' ? '&host=1' : ''}`;
+let ws; const hostPeerId=`hot-potato-host-${room.toLowerCase()}`;
 let theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'; document.documentElement.setAttribute('data-theme',theme); const themeToggle=document.querySelector('[data-theme-toggle]'); function renderTheme(){ if(!themeToggle) return; themeToggle.innerHTML=theme==='dark'?'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path></svg>':'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>'; } renderTheme(); themeToggle?.addEventListener('click',()=>{theme=theme==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',theme);renderTheme();});
 const initials=name=>name.split(/\s+/).filter(Boolean).slice(0,2).map(p=>p[0]?.toUpperCase()).join('')||'?';
 const seatPosition=(index,total)=>{const cols=total<=6?3:4; const rows=Math.ceil(total/cols); const col=index%cols; const row=Math.floor(index/cols); const x=cols===1?50:14+(72/(cols-1))*col; const y=rows===1?50:18+(64/(rows-1))*row; return {x,y};};
@@ -91,6 +91,42 @@ function runJoin(){
   function connect(asWatcher){ watchOnly=asWatcher; myName=(els.joinName.value.trim()||'Guest'); const guestId=`hot-potato-guest-${room.toLowerCase()}-${Math.random().toString(36).slice(2,7)}`; peer=new Peer(guestId); peer.on('open',()=>{ conn=peer.connect(hostPeerId,{reliable:true}); conn.on('open',()=>{ els.joinStatus.textContent='Connected'; els.joinStatusText.textContent=`Joined room ${room}.`; conn.send({type:'intro',name:myName,watcher:watchOnly}); }); conn.on('data',msg=>{ if(msg?.type==='state') applyState(msg.data); }); conn.on('error',()=>{ els.joinStatus.textContent='Connection error'; els.joinStatusText.textContent='Could not receive host updates.'; }); }); peer.on('error',()=>{ els.joinStatus.textContent='Connection error'; els.joinStatusText.textContent='The facilitator may not be online yet.'; }); }
   els.joinBtn.addEventListener('click',()=>connect(false)); els.watchOnlyBtn.addEventListener('click',()=>connect(true));
 }
+  function initWS() {
+  ws = new WebSocket(wsUrl);
+  ws.onopen = () => {
+    console.log(mode === 'host' ? 'Host WS ready' : 'Player joined room ' + room);
+    if (mode !== 'host') ws.send(JSON.stringify({type: 'intro', name: els.joinName.value || 'Guest'}));
+    // Trigger initial refreshAll/validate
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'state') {
+      // Call your existing applyState(msg.data) or snapshot logic
+      latestState = msg.data;
+      refreshAll();  // Adapt to your functions
+    } else if (msg.type === 'throwRequest') {
+      // Host: process as before from conn.ondata
+      const actor = msg.actor || 'player';
+      const targetName = msg.targetName;
+      const idx = state.players.findIndex(p => p.toLowerCase() === targetName.toLowerCase());
+      if (idx !== -1) throwTo(idx, actor, false);
+    } else if (msg.type === 'joined') {
+      els.joinStatus.textContent('Connected');
+    }
+  };
+}
+
+// In runHost broadcast():
+function broadcast() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'state', data: snapshot()}));
+  }
+}
+
+// In player throw clicks:
+conn.send → ws.send(JSON.stringify({type: 'throwRequest', targetName: name, actor: myName}));
+
+// Call initWS() in if(mode==='host') runHost(); else runJoin();
 </script>
 </body>
 </html>
